@@ -1,0 +1,190 @@
+desc: Kai's Tone Shader (Output)
+
+// ================================================
+// 1. Parameters
+// ================================================
+
+slider1:low_gain=5.0<0.0, 12.0, 0.1>Resonance (Low Gain)
+slider2:low_freq=90.0<60.0, 150.0, 1.0>Resonance Freq (Hz)
+slider3:high_gain=5.0<0.0, 12.0, 0.1>Presence (High Gain)
+slider4:high_freq=3000.0<1500.0, 6000.0, 10.0>Presence Freq (Hz)
+
+slider5:sag_drive=2.0<0.0, 10.0, 0.1>Power Tube Sag Amount
+slider6:sag_recovery=100<10, 300, 1>Sag Recovery Time (ms)
+
+slider10:cab_dur_ms=3.5<1.0, 10.0, 0.01>Impulse Duration (ms)
+slider11:cab_freq_hz=820.0<80.0, 1500.0, 1.0>Main Resonance (Hz)
+slider12:cab_curve=1.5<0.1, 4.0, 0.01>Damping Curve (Exp)
+slider13:cab_noise=0.5<0.0, 1.0, 0.01>Noise Scale
+slider14:cab_seed=1234<0, 10000, 1>Random Seed
+
+slider20:cab_hf_cut=5500<2000, 12000, 100>Cutoff Freq (Hz)
+slider21:cab_hf_q=0.707<0.5, 2.0, 0.01>Cutoff Resonance (Q)
+slider22:cab_hf_slope=0<0, 1, 1{12dB/oct,24dB/oct}>Attenuation Slope
+
+slider30:out_gain=0.0<-48.0, 12.0, 0.1>Output Trim (dB)
+
+@init
+MEM_IR = 0;
+MEM_CONV = 10000;
+IR_LEN = 1024; 
+
+// State Variables for Filters
+ls_x1=0; ls_x2=0; ls_y1=0; ls_y2=0; // Resonance
+hs_x1=0; hs_x2=0; hs_y1=0; hs_y2=0; // Presence
+hc_x1=0; hc_x2=0; hc_y1=0; hc_y2=0; // High Cut 1
+hc2_x1=0; hc2_x2=0; hc2_y1=0; hc2_y2=0; // High Cut 2
+
+conv_idx = 0;
+
+// Sag Envelope State
+sag_env = 0;
+
+// Change detection
+last_seed = -1; last_dur = -1; last_freq = -1; last_curve = -1; last_noise = -1;
+
+@slider
+trim = pow(10, out_gain / 20.0);
+
+// --- Sag Coefficients ---
+sag_coeff_att = exp(-1000 / (10 * srate)); 
+sag_coeff_rel = exp(-1000 / (sag_recovery * srate));
+sag_thresh = pow(10, -sag_drive / 20.0);
+
+// --- 1. Filter Coeff Calc ---
+// Resonance (Low Shelf)
+res_w0 = 2 * $pi * low_freq / srate;
+res_gain = pow(10, low_gain / 20.0); 
+res_sn = sin(res_w0); res_cs = cos(res_w0);
+res_alpha = res_sn / 4.0; 
+res_A = sqrt(res_gain);
+ls_b0 = res_A*((res_A+1)-(res_A-1)*res_cs+2*sqrt(res_A)*res_alpha);
+ls_b1 = 2*res_A*((res_A-1)-(res_A+1)*res_cs);
+ls_b2 = res_A*((res_A+1)-(res_A-1)*res_cs-2*sqrt(res_A)*res_alpha);
+ls_a0 = (res_A+1)+(res_A-1)*res_cs+2*sqrt(res_A)*res_alpha;
+ls_a1 = -2*((res_A-1)+(res_A+1)*res_cs);
+ls_a2 = (res_A+1)+(res_A-1)*res_cs-2*sqrt(res_A)*res_alpha;
+ls_b0/=ls_a0; ls_b1/=ls_a0; ls_b2/=ls_a0; ls_a1/=ls_a0; ls_a2/=ls_a0;
+
+// Presence (High Shelf)
+pres_w0 = 2 * $pi * high_freq / srate;
+pres_gain = pow(10, high_gain / 20.0);
+pres_sn = sin(pres_w0); pres_cs = cos(pres_w0);
+pres_alpha = pres_sn / 2.0; 
+pres_A = sqrt(pres_gain);
+hs_b0 = pres_A*((pres_A+1)+(pres_A-1)*pres_cs+2*sqrt(pres_A)*pres_alpha);
+hs_b1 = -2*pres_A*((pres_A-1)+(pres_A+1)*pres_cs);
+hs_b2 = pres_A*((pres_A+1)+(pres_A-1)*pres_cs-2*sqrt(pres_A)*pres_alpha);
+hs_a0 = (pres_A+1)-(pres_A-1)*pres_cs+2*sqrt(pres_A)*pres_alpha;
+hs_a1 = 2*((pres_A-1)-(pres_A+1)*pres_cs);
+hs_a2 = (pres_A+1)-(pres_A-1)*pres_cs-2*sqrt(pres_A)*pres_alpha;
+hs_b0/=hs_a0; hs_b1/=hs_a0; hs_b2/=hs_a0; hs_a1/=hs_a0; hs_a2/=hs_a0;
+
+// High Cut (Variable Q)
+hc_w0 = 2 * $pi * cab_hf_cut / srate;
+hc_cs = cos(hc_w0);
+hc_alpha = sin(hc_w0) / (2 * cab_hf_q);
+hc_b0=(1-hc_cs)/2; hc_b1=1-hc_cs; hc_b2=(1-hc_cs)/2;
+hc_a0=1+hc_alpha; hc_a1=-2*hc_cs; hc_a2=1-hc_alpha;
+hc_b0/=hc_a0; hc_b1/=hc_a0; hc_b2/=hc_a0; hc_a1/=hc_a0; hc_a2/=hc_a0;
+
+// --- 2. Improved Procedural IR ---
+(cab_seed != last_seed || cab_dur_ms != last_dur || cab_freq_hz != last_freq || cab_curve != last_curve || cab_noise != last_noise) ? (
+
+    total_samples = floor(cab_dur_ms * 0.001 * srate);
+    
+    r_state = floor(cab_seed);
+    r_state = (r_state * 1103515245 + 12345) & 2147483647; r_val = r_state / 2147483648;
+    peak_sample = floor(total_samples * (0.05 + r_val * 0.2)); peak_sample = max(1, peak_sample);
+    
+    w1 = 2 * $pi * cab_freq_hz / srate;
+    w2 = w1 * 0.65;
+    
+    r_state = (r_state * 1103515245 + 12345) & 2147483647; r_val = r_state / 2147483648;
+    phase_off1 = r_val * 2 * $pi;
+    r_state = (r_state * 1103515245 + 12345) & 2147483647; r_val = r_state / 2147483648;
+    phase_off2 = r_val * 2 * $pi;
+    
+    internal_damp = 200.0 + 200.0 * r_val;
+
+    i = 0;
+    loop(IR_LEN, 
+        (i >= total_samples) ? ( val = 0; ) : (
+            envelope = 0;
+            (i <= peak_sample) ? ( 
+                progress = i / peak_sample; 
+                envelope = pow(progress, cab_curve); 
+            ) : (
+                progress = (i - peak_sample) / (total_samples - peak_sample);
+                envelope = pow(1.0 - progress, cab_curve * 1.2);
+            );
+
+            osc1 = sin(w1 * i + phase_off1);
+            osc2 = sin(w2 * i + phase_off2);
+            osc = osc1 + osc2 * 0.2;
+            r_state = (r_state * 1103515245 + 12345) & 2147483647; 
+            noise_raw = ((r_state / 2147483648.0) * 2.0 - 1.0);
+            noise = noise_raw * cab_noise * 0.15;
+
+            damp_factor = (i > peak_sample) ? exp(-(i - peak_sample) / srate * internal_damp) : 1.0;
+            val = (osc + noise) * damp_factor * envelope;
+        );
+        MEM_IR[i] = val; i += 1;
+    );
+    
+    max_peak = 0; k = 0; loop(IR_LEN, max_peak = max(max_peak, abs(MEM_IR[k])); k+=1;);
+    gain_fix = 0.8 / (max_peak + 0.00001); k = 0; loop(IR_LEN, MEM_IR[k] *= gain_fix; k+=1;);
+
+    last_seed = cab_seed; last_dur = cab_dur_ms; 
+    last_freq = cab_freq_hz; last_curve = cab_curve; last_noise = cab_noise;
+    actual_conv_len = min(total_samples + 32, IR_LEN);
+);
+
+@sample
+input = spl0;
+
+// === Stage 1: Resonance (Low End) ===
+res_out = ls_b0*input + ls_b1*ls_x1 + ls_b2*ls_x2 - ls_a1*ls_y1 - ls_a2*ls_y2;
+ls_x2=ls_x1; ls_x1=input; ls_y2=ls_y1; ls_y1=res_out;
+
+// === Stage 2: Dynamic Sag (Power Amp) ===
+input_abs = abs(res_out);
+sag_env = (input_abs > sag_env) ? 
+          (sag_env * sag_coeff_att + input_abs * (1 - sag_coeff_att)) : 
+          (sag_env * sag_coeff_rel + input_abs * (1 - sag_coeff_rel));
+
+sag_reduction = 1.0 / (1.0 + sag_env * slider5);
+sag_out = res_out * sag_reduction;
+
+// === Stage 3: Presence (High End) ===
+pres_out = hs_b0*sag_out + hs_b1*hs_x1 + hs_b2*hs_x2 - hs_a1*hs_y1 - hs_a2*hs_y2;
+hs_x2=hs_x1; hs_x1=sag_out; hs_y2=hs_y1; hs_y1=pres_out;
+
+// === Stage 4: Procedural Cabinet ===
+MEM_CONV[conv_idx] = pres_out; 
+cab_out = 0;
+k = 0;
+read_ptr = conv_idx; 
+
+loop(actual_conv_len,
+    h = MEM_IR[k];
+    x = MEM_CONV[read_ptr & 16383];
+    cab_out += h * x;
+    read_ptr -= 1;
+    k += 1;
+);
+conv_idx = (conv_idx + 1) & 16383;
+
+// === Stage 5: High Cut ===
+hc_out1 = hc_b0*cab_out + hc_b1*hc_x1 + hc_b2*hc_x2 - hc_a1*hc_y1 - hc_a2*hc_y2;
+hc_x2=hc_x1; hc_x1=cab_out; hc_y2=hc_y1; hc_y1=hc_out1;
+
+cab_hf_slope ? (
+    final_sig = hc_b0*hc_out1 + hc_b1*hc2_x1 + hc_b2*hc2_x2 - hc_a1*hc2_y1 - hc_a2*hc2_y2;
+    hc2_x2=hc2_x1; hc2_x1=hc_out1; hc2_y2=hc2_y1; hc2_y1=final_sig;
+) : (
+    final_sig = hc_out1;
+);
+
+spl0 = final_sig * trim;
+spl1 = spl0;

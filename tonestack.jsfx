@@ -1,0 +1,82 @@
+desc: Kai's Tone Shader (Tone Stack)
+
+slider1:bass_gain=0.0<-12.0, 12.0, 0.1>Bass (dB)
+slider2:mid_gain=0.0<-12.0, 12.0, 0.1>Middle (dB)
+slider3:treb_gain=0.0<-12.0, 12.0, 0.1>Treble (dB)
+
+slider10:bass_freq=100.0<50.0, 300.0, 1.0>Bass Freq (Low Shelf)
+slider11:mid_freq=500.0<200.0, 1500.0, 10.0>Mid Freq (Peaking)
+slider12:mid_q=1.0<0.5, 3.0, 0.1>Mid Q (Width)
+slider13:treb_freq=3500.0<1500.0, 6000.0, 10.0>Treble Freq (High Shelf)
+
+slider20:out_gain=0.0<-12.0, 12.0, 0.1>Output Trim
+
+@init
+ls_x1=0; ls_x2=0; ls_y1=0; ls_y2=0;
+pk_x1=0; pk_x2=0; pk_y1=0; pk_y2=0;
+hs_x1=0; hs_x2=0; hs_y1=0; hs_y2=0;
+
+@slider
+trim = pow(10, out_gain / 20.0);
+
+// --- 1. Bass (Low Shelf) ---
+ls_w0 = 2 * $pi * bass_freq / srate;
+ls_gain = pow(10, bass_gain / 40.0);
+ls_sn = sin(ls_w0); ls_cs = cos(ls_w0);
+ls_alpha = ls_sn / 2.0 * sqrt(2.0); // Q=0.707
+ls_beta = sqrt(ls_gain);
+
+ls_b0 = ls_gain*((ls_gain+1) - (ls_gain-1)*ls_cs + 2*sqrt(ls_gain)*ls_alpha);
+ls_b1 = 2*ls_gain*((ls_gain-1) - (ls_gain+1)*ls_cs);
+ls_b2 = ls_gain*((ls_gain+1) - (ls_gain-1)*ls_cs - 2*sqrt(ls_gain)*ls_alpha);
+ls_a0 = (ls_gain+1) + (ls_gain-1)*ls_cs + 2*sqrt(ls_gain)*ls_alpha;
+ls_a1 = -2*((ls_gain-1) + (ls_gain+1)*ls_cs);
+ls_a2 = (ls_gain+1) + (ls_gain-1)*ls_cs - 2*sqrt(ls_gain)*ls_alpha;
+ls_b0/=ls_a0; ls_b1/=ls_a0; ls_b2/=ls_a0; ls_a1/=ls_a0; ls_a2/=ls_a0;
+
+// --- 2. Middle (Peaking) ---
+// Metal = Cut (-6dB to -10dB)
+// Classic Rock = Boost (+3dB)
+pk_w0 = 2 * $pi * mid_freq / srate;
+pk_gain = pow(10, mid_gain / 40.0);
+pk_sn = sin(pk_w0); pk_cs = cos(pk_w0);
+pk_alpha = pk_sn / (2.0 * mid_q);
+
+pk_b0 = 1 + pk_alpha * pk_gain;
+pk_b1 = -2 * pk_cs;
+pk_b2 = 1 - pk_alpha * pk_gain;
+pk_a0 = 1 + pk_alpha / pk_gain;
+pk_a1 = -2 * pk_cs;
+pk_a2 = 1 - pk_alpha / pk_gain;
+pk_b0/=pk_a0; pk_b1/=pk_a0; pk_b2/=pk_a0; pk_a1/=pk_a0; pk_a2/=pk_a0;
+
+// --- 3. Treble (High Shelf) ---
+hs_w0 = 2 * $pi * treb_freq / srate;
+hs_gain = pow(10, treb_gain / 40.0);
+hs_sn = sin(hs_w0); hs_cs = cos(hs_w0);
+hs_alpha = hs_sn / 2.0 * sqrt(2.0); // Q=0.707
+hs_beta = sqrt(hs_gain);
+
+hs_b0 = hs_gain*((hs_gain+1) + (hs_gain-1)*hs_cs + 2*sqrt(hs_gain)*hs_alpha);
+hs_b1 = -2*hs_gain*((hs_gain-1) + (hs_gain+1)*hs_cs);
+hs_b2 = hs_gain*((hs_gain+1) + (hs_gain-1)*hs_cs - 2*sqrt(hs_gain)*hs_alpha);
+hs_a0 = (hs_gain+1) - (hs_gain-1)*hs_cs + 2*sqrt(hs_gain)*hs_alpha;
+hs_a1 = 2*((hs_gain-1) - (hs_gain+1)*hs_cs);
+hs_a2 = (hs_gain+1) - (hs_gain-1)*hs_cs - 2*sqrt(hs_gain)*hs_alpha;
+hs_b0/=hs_a0; hs_b1/=hs_a0; hs_b2/=hs_a0; hs_a1/=hs_a0; hs_a2/=hs_a0;
+
+@sample
+input = spl0;
+
+// Series Processing (Bass -> Mid -> Treble)
+ls_out = ls_b0*input + ls_b1*ls_x1 + ls_b2*ls_x2 - ls_a1*ls_y1 - ls_a2*ls_y2;
+ls_x2=ls_x1; ls_x1=input; ls_y2=ls_y1; ls_y1=ls_out;
+
+pk_out = pk_b0*ls_out + pk_b1*pk_x1 + pk_b2*pk_x2 - pk_a1*pk_y1 - pk_a2*pk_y2;
+pk_x2=pk_x1; pk_x1=ls_out; pk_y2=pk_y1; pk_y1=pk_out;
+
+hs_out = hs_b0*pk_out + hs_b1*hs_x1 + hs_b2*hs_x2 - hs_a1*hs_y1 - hs_a2*hs_y2;
+hs_x2=hs_x1; hs_x1=pk_out; hs_y2=hs_y1; hs_y1=hs_out;
+
+spl0 = hs_out * trim;
+spl1 = spl0;

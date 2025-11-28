@@ -1,0 +1,174 @@
+desc: Kai's Tone Shader (Core)
+
+slider1:in_hp_freq=100.0<20.0, 800.0, 1.0>Input High Pass (Tightness)
+slider2:in_lp_freq=12000.0<5000.0, 20000.0, 100.0>Input Low Pass (De-Noise)
+
+slider3:drive=1.0<1.0, 50.0, 0.1>Input Drive
+slider4:dynamic=0.95<0.0, 1.0, 0.01>Dynamic Sensitivity
+slider5:out_gain=1.0<0.0, 2.0, 0.01>Output Gain
+
+slider6:att_ms=100<0.1, 500, 1>Attack (ms)
+slider7:rel_ms=200<0.1, 1000, 1>Release (ms)
+
+slider10:map_mode=2<0,2,1{Hard Clip,Sigmoid (Smooth),Diode (Crunch)}>Kernel Type
+slider11:diode_bias=1.0<0.1, 10.0, 0.01>Diode Bias / Asymmetry
+slider12:cheby_decay=0.2<0.1, 4.0, 0.1>Harmonic Decay
+slider13:odd_gain=0.8<0.0, 2.0, 0.01>Odd Harmonics (Fuzz)
+slider14:even_gain=0.5<0.0, 2.0, 0.01>Even Harmonics (Tube)
+
+slider20:oversample=1<0,1,1{Off,On (2x)}>High Quality Mode
+
+@init
+MAX_ORDER = 8;
+MEM_CHEBY = 0; 
+
+envelope = 0.0;
+hp_x1 = 0.0; hp_y1 = 0.0;
+lp_y1 = 0.0;
+
+// Oversampling Filter States
+os_lp_x1=0; os_lp_x2=0; os_lp_y1=0; os_lp_y2=0; // Upsample Filter
+ds_lp_x1=0; ds_lp_x2=0; ds_lp_y1=0; ds_lp_y2=0; // Downsample Filter
+
+// Core Kernel States
+core_t_n1=0; core_t_n2=0;
+core_dc_x1=0; core_dc_y1=0;
+
+@slider
+// 1. Envelope
+att_coeff = exp(-1000.0 / (att_ms * srate));
+rel_coeff = exp(-1000.0 / (rel_ms * srate));
+
+// 2. Input Conditioners
+k_hp = tan($pi * in_hp_freq / srate);
+alpha_hp = 1.0 / (1.0 + k_hp);
+
+k_lp = tan($pi * in_lp_freq / srate);
+alpha_lp = k_lp / (k_lp + 1.0);
+
+// 3. Chebyshev Weights
+k_idx = 2;
+loop(MAX_ORDER - 1,
+    base_w = 1.0 / pow(k_idx, cheby_decay);
+    is_even = (k_idx % 2 == 0);
+    type_gain = is_even ? even_gain : odd_gain;
+    MEM_CHEBY[k_idx] = base_w * type_gain;
+    k_idx += 1;
+);
+
+// 4. Anti-Aliasing Filter (2x Rate Biquad Butterworth)
+// Cutoff @ 20kHz to protect audio band
+os_cut = 20000;
+os_w0 = 2 * $pi * os_cut / (srate * 2); 
+os_cos = cos(os_w0);
+os_alpha = sin(os_w0) * 0.70710678;
+
+lp_b0 = (1 - os_cos) / 2;
+lp_b1 = 1 - os_cos;
+lp_b2 = (1 - os_cos) / 2;
+lp_a0 = 1 + os_alpha;
+lp_a1 = -2 * os_cos;
+lp_a2 = 1 - os_alpha;
+
+lp_b0 /= lp_a0; lp_b1 /= lp_a0; lp_b2 /= lp_a0;
+lp_a1 /= lp_a0; lp_a2 /= lp_a0;
+
+@sample
+input = spl0;
+
+// A. Input Conditioning (Band Limit)
+hp_out = alpha_hp * (hp_y1 + input - hp_x1);
+hp_x1 = input;
+hp_y1 = hp_out;
+
+conditioned_sig = hp_out * alpha_lp + lp_y1 * (1.0 - alpha_lp);
+lp_y1 = conditioned_sig;
+
+// B. Dynamics Detection
+target = abs(conditioned_sig);
+target > envelope ? (
+    envelope = envelope * att_coeff + target * (1.0 - att_coeff);
+) : (
+    envelope = envelope * rel_coeff + target * (1.0 - rel_coeff);
+);
+env_scaler = (dynamic * min(1.0, envelope * 10.0) + 1.0 - dynamic);
+
+base_sig = conditioned_sig * (1.0 + (drive - 1.0) * env_scaler);
+
+
+iter_count = oversample ? 2 : 1;
+final_out = 0;
+loop_idx = 0;
+
+loop(iter_count,
+    
+    // --- A. Upsample (Interpolation) ---
+    curr_in = 0;
+    oversample ? (
+        // Zero Stuffing: Frame 0 = Signal*2, Frame 1 = 0
+        loop_idx == 0 ? raw_in = base_sig * 2.0 : raw_in = 0.0;
+        
+        // Apply AA Filter
+        curr_in = lp_b0*raw_in + lp_b1*os_lp_x1 + lp_b2*os_lp_x2 - lp_a1*os_lp_y1 - lp_a2*os_lp_y2;
+        os_lp_x2 = os_lp_x1; os_lp_x1 = raw_in; os_lp_y2 = os_lp_y1; os_lp_y1 = curr_in;
+    ) : (
+        // No Oversample: Pass through
+        curr_in = base_sig;
+    );
+
+    // --- B. The Kernel (Non-Linear Math) ---
+    
+    // 1. Mapper
+    cheby_in = 0;
+    map_mode == 0 ? (
+        cheby_in = max(-1.0, min(1.0, curr_in)); // Hard Clip
+    ) : map_mode == 1 ? (
+        cheby_in = 2.0 / (1.0 + exp(-curr_in * 2.0)) - 1.0; // Sigmoid
+    ) : (
+        curr_in >= 0 ? (
+            cheby_in = 1.0 - exp(-curr_in);
+        ) : (
+            cheby_in = -1.0 + exp(curr_in * diode_bias);
+        ); // Diode
+    );
+    cheby_in = max(-1.0, min(1.0, cheby_in));
+
+    // 2. Chebyshev Synthesis
+    core_t_n1 = cheby_in; 
+    core_t_n2 = 1.0;
+    cheby_sum = core_t_n1; 
+
+    c_k = 2;
+    loop(MAX_ORDER - 1,
+        t_n = 2.0 * cheby_in * core_t_n1 - core_t_n2;
+        w = MEM_CHEBY[c_k] * env_scaler; 
+        cheby_sum += t_n * w;
+        core_t_n2 = core_t_n1;
+        core_t_n1 = t_n;
+        c_k += 1;
+    );
+
+    // 3. DC Blocker (High Rate)
+    curr_sat_out = cheby_sum - core_dc_x1 + 0.999 * core_dc_y1;
+    core_dc_x1 = cheby_sum;
+    core_dc_y1 = curr_sat_out;
+    
+
+    // --- C. Downsample (Decimation) ---
+    oversample ? (
+        // Apply AA Filter again to cut ultrasonic harmonics
+        ds_out = lp_b0*curr_sat_out + lp_b1*ds_lp_x1 + lp_b2*ds_lp_x2 - lp_a1*ds_lp_y1 - lp_a2*ds_lp_y2;
+        ds_lp_x2 = ds_lp_x1; ds_lp_x1 = curr_sat_out; ds_lp_y2 = ds_lp_y1; ds_lp_y1 = ds_out;
+        
+        // Keep Frame 0, Drop Frame 1
+        loop_idx == 0 ? final_out = ds_out;
+    ) : (
+        final_out = curr_sat_out;
+    );
+
+    loop_idx += 1;
+);
+
+// --- Stage 3: Output ---
+spl0 = final_out * out_gain;
+spl1 = spl0;
