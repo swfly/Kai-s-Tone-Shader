@@ -17,10 +17,10 @@ This project deconstructs the signal chain into its functional essence:
 
 A comparison to verify that this approach produces a usable tone (it doesn't have to be "better" here).
 
-| Sample | Description | Link |
+| Sample | Description | Playback |
 | :--- | :--- | :--- |
-| **Riff 1 (A)** | Modern High Gain | [▶️ Listen to A](sample/riff1_A.mp3) |
-| **Riff 1 (B)** | Modern High Gain | [▶️ Listen to B](sample/riff1_B.mp3) |
+| **Riff 1 (A)** | Modern High Gain | <audio controls src="https://swfly.github.io/Kai-s-Tone-Shader/sample/riff1_A.mp3"><a href="https://swfly.github.io/Kai-s-Tone-Shader/sample/riff1_A.mp3">▶️ Listen (Source A)</a></audio> |
+| **Riff 1 (B)** | Modern High Gain | <audio controls src="https://swfly.github.io/Kai-s-Tone-Shader/sample/riff1_B.mp3"><a href="https://swfly.github.io/Kai-s-Tone-Shader/sample/riff1_B.mp3">▶️ Listen (Source B)</a></audio> |
 
 <details>
 <summary><strong>🔍 Click to reveal sources</strong></summary>
