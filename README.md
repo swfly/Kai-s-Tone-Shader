@@ -2,16 +2,16 @@
 
 A JSFX (Reaper) library that explores a **non-skeuomorphic** approach to guitar tone.
 
-Instead of simulating physical circuits (capacitors, tubes, voltage), this project builds tone using pure mathematical functions and signal processing concepts. We call this "Tone Shading"—similar to how graphics shaders calculate color, we calculate sound.
+Instead of simulating physical circuits (capacitors, tubes, voltage), this project builds tone using pure mathematical functions and signal processing concepts. I call this "Tone Shading"—similar to how graphics shaders calculate color, I calculate sound.
 
 ## Philosophy
 
 Most amp sims try to replicate 50-year-old hardware, limiting you to the flaws and interfaces of the past.
 
-This project deconstructs the signal chain into its functional essence:
-1.  **Distortion is Waveshaping** (Math functions, not tube simulations).
-2.  **Cabinet is EQ** (Filters, not physical boxes).
-3.  **Dynamics is Envelope Following** (Compression, not voltage sag).
+Here, I deconstruct the guitar amp into its mathematical functions rather than simulating physical components:
+1.  **Distortion is Waveshaping:** I use kernels (`tanh`, `sigmoid`) and Chebyshev polynomials to shape harmonics, not tube simulations.
+2.  **Tone Stack is EQ:** I use precise digital Biquad filters, avoiding the messy interaction of passive analog circuits.
+3.  **Cabinet is Convolution:** I use procedural Impulse Responses and envelope followers to shape the frequency and dynamics.
 
 ## Audio Demo
 
@@ -33,9 +33,9 @@ A comparison to verify that this approach produces a usable tone (it doesn't hav
 
 The DSP is split into three modules:
 
-1.  **Core (Preamp):** Handles waveshaping and harmonic distortion. Uses `tanh` and polynomial functions to mimic saturation curves.
-2.  **Tone Stack (EQ):** A flexible parametric EQ. It replaces the traditional interactive Bass/Mid/Treble circuit with precise frequency shaping.
-3.  **Output (Power Amp/Cab):** Handles dynamics (compression/sag) and final frequency shaping (IR/Cab simulation).
+1.  **Core (Preamp):** Handles waveshaping and harmonic distortion.
+2.  **Tone Stack (EQ):** A flexible 3-Band EQ.
+3.  **Output (Power Amp/Cab):** Handles physically-inspired EQ and final time-domain smearing (procedural IR).
 
 ## How to Use
 
