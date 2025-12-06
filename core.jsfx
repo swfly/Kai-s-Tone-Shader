@@ -48,13 +48,26 @@ alpha_lp = k_lp / (k_lp + 1.0);
 
 // 3. Chebyshev Weights
 k_idx = 2;
+dc_correction = 0; // Reset correction
 loop(MAX_ORDER - 1,
     base_w = 1.0 / pow(k_idx, cheby_decay);
     is_even = (k_idx % 2 == 0);
     type_gain = is_even ? even_gain : odd_gain;
     MEM_CHEBY[k_idx] = base_w * type_gain;
+
+    // --- CALCULATE DC OFFSET AT SILENCE ---
+    // Even harmonics alternate -1, +1, -1 at silence (T2, T4, T6...)
+    // Odd harmonics are always 0 at silence.
+    is_even ? (
+        // k_idx 2, 6, 10... are -1. k_idx 4, 8, 12... are +1
+        sign = ((k_idx / 2) % 2 == 1) ? -1 : 1;
+        dc_correction += sign * MEM_CHEBY[k_idx];
+    );
+
     k_idx += 1;
 );
+rest_scaler = 1.0 - dynamic;
+dc_correction *= rest_scaler;
 
 // 4. Anti-Aliasing Filter (2x Rate Biquad Butterworth)
 // Cutoff @ 20kHz to protect audio band
@@ -93,7 +106,7 @@ target > envelope ? (
 );
 env_scaler = (dynamic * min(1.0, envelope * 10.0) + 1.0 - dynamic);
 
-base_sig = conditioned_sig * (1.0 + (drive - 1.0) * env_scaler);
+base_sig = conditioned_sig * drive * env_scaler;
 
 
 iter_count = oversample ? 2 : 1;
@@ -147,6 +160,7 @@ loop(iter_count,
         core_t_n1 = t_n;
         c_k += 1;
     );
+    cheby_sum -= dc_correction * (env_scaler / rest_scaler);
 
     // 3. DC Blocker (High Rate)
     curr_sat_out = cheby_sum - core_dc_x1 + 0.999 * core_dc_y1;

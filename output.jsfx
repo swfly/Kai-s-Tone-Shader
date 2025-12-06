@@ -9,8 +9,8 @@ slider2:low_freq=90.0<60.0, 150.0, 1.0>Resonance Freq (Hz)
 slider3:high_gain=5.0<0.0, 12.0, 0.1>Presence (High Gain)
 slider4:high_freq=3000.0<1500.0, 6000.0, 10.0>Presence Freq (Hz)
 
-slider5:sag_drive=2.0<0.0, 10.0, 0.1>Power Tube Sag Amount
-slider6:sag_recovery=100<10, 300, 1>Sag Recovery Time (ms)
+slider5:sag_drive=1.0<0.0, 5.0, 0.1>Power Tube Sag Amount
+slider6:sag_recovery=7<10, 20, 1>Sag Recovery Time (ms)
 
 slider10:cab_dur_ms=3.5<1.0, 10.0, 0.01>Impulse Duration (ms)
 slider11:cab_freq_hz=820.0<80.0, 1500.0, 1.0>Main Resonance (Hz)
@@ -28,6 +28,8 @@ slider30:out_gain=0.0<-48.0, 12.0, 0.1>Output Trim (dB)
 MEM_IR = 0;
 MEM_CONV = 10000;
 IR_LEN = 1024; 
+
+memset(MEM_CONV, 0, 16384); // <--- ADD THIS LINE
 
 // State Variables for Filters
 ls_x1=0; ls_x2=0; ls_y1=0; ls_y2=0; // Resonance
